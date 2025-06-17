@@ -15,17 +15,23 @@ def extract_text(file_path, file_type):
     elif file_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
         doc = Document(file_path)
         return "\n".join([para.text for para in doc.paragraphs])
-    else:
-        return ""
+    return ""
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-        uploaded_file = request.files.get('file')
-        email = request.form.get('email', 'N/A')
-        first_name = request.form.get('first_name', '')
-        last_name = request.form.get('last_name', '')
+        # Forminator field mappings
+        first_name = request.form.get('text-2', '')
+        last_name = request.form.get('text-3', '')
+        email = request.form.get('email-1', 'N/A')
+        coupon_code = request.form.get('text-1', '')
+        consent = request.form.get('consent-1', 'off')
+        uploaded_file = request.files.get('upload-1')
+
         full_name = f"{first_name} {last_name}".strip()
+
+        if consent != 'on':
+            return jsonify({"error": "Consent not given"}), 400
 
         if not uploaded_file:
             return jsonify({"error": "No file uploaded"}), 400
@@ -40,8 +46,8 @@ def analyze():
         prompt = f"""
         Please review this business plan and provide:
         1. A letter grade (A, B, C, D, F) for lender-readiness.
-        2. Identify any missing or underdeveloped sections that are important for funding (e.g., DSCR, CapEx, repayment, competitive analysis).
-        3. Provide 3–5 professional-level improvement suggestions to strengthen clarity, credibility, or effectiveness.
+        2. Identify any missing or underdeveloped sections important for SBA or commercial funding (e.g., DSCR, CapEx, repayment plan, staffing model).
+        3. Provide 3–5 professional-level suggestions to improve the plan’s clarity, credibility, or effectiveness.
 
         Business plan text:
         {file_text[:15000]}
@@ -56,7 +62,12 @@ def analyze():
         )
 
         result = response['choices'][0]['message']['content']
-        print(f"\n=== Analysis for {full_name} ({email}) ===\n{result}\n")
+
+        print(f"\n=== Business Plan Review for {full_name} ({email}) ===")
+        print(f"Coupon Code: {coupon_code}")
+        print(f"Consent: {consent}")
+        print(result)
+        print("\n===========================\n")
 
         return jsonify({"message": "Analysis complete", "summary": result})
 
