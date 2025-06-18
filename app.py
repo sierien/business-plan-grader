@@ -11,13 +11,16 @@ app = Flask(__name__)
 # Initialize OpenAI client using new v1+ SDK
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Common headers to mimic a browser
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Accept": "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document;q=0.9,*/*;q=0.8",
+}
+
 def extract_text_from_pdf(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=BROWSER_HEADERS)
     if response.status_code != 200:
-        raise ValueError(f"Failed to download file: status {response.status_code}")
+        raise Exception(f"Failed to download file: status {response.status_code}")
     with open("temp.pdf", "wb") as f:
         f.write(response.content)
     doc = fitz.open("temp.pdf")
@@ -27,12 +30,9 @@ def extract_text_from_pdf(url):
     return text
 
 def extract_text_from_docx(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=BROWSER_HEADERS)
     if response.status_code != 200:
-        raise ValueError(f"Failed to download file: status {response.status_code}")
+        raise Exception(f"Failed to download file: status {response.status_code}")
     with open("temp.docx", "wb") as f:
         f.write(response.content)
     doc = Document("temp.docx")
