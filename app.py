@@ -1,74 +1,73 @@
 import os
 import requests
-import fitz  # PyMuPDF
-import docx
 from flask import Flask, request, jsonify
-from io import BytesIO
-import openai
+from openai import OpenAI
+from docx import Document
+import fitz  # PyMuPDF
 
+# Initialize Flask app
 app = Flask(__name__)
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def extract_text_from_file(file_url):
-    response = requests.get(file_url)
-    if response.status_code != 200:
-        raise ValueError("Failed to download file")
+# Initialize OpenAI client using new v1+ SDK
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    content_type = response.headers.get("Content-Type", "")
-    if "pdf" in content_type:
-        with fitz.open(stream=response.content, filetype="pdf") as doc:
-            return "\n".join(page.get_text() for page in doc)
-    elif "wordprocessingml" in content_type or file_url.lower().endswith(".docx"):
-        doc = docx.Document(BytesIO(response.content))
-        return "\n".join(p.text for p in doc.paragraphs)
-    else:
-        raise ValueError("Unsupported file type")
+def extract_text_from_pdf(url):
+    response = requests.get(url)
+    with open("temp.pdf", "wb") as f:
+        f.write(response.content)
+    doc = fitz.open("temp.pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
 
-def generate_analysis(text, first_name, last_name, email):
-    prompt = f"""
-You are a professional business plan evaluator. Analyze the following business plan and provide:
-1. An executive summary evaluation.
-2. Strengths and weaknesses.
-3. Suggestions to improve the plan's viability for lenders or investors.
-4. Any red flags or missing components.
-Limit the response to 500 words.
+def extract_text_from_docx(url):
+    response = requests.get(url)
+    with open("temp.docx", "wb") as f:
+        f.write(response.content)
+    doc = Document("temp.docx")
+    return "\n".join([para.text for para in doc.paragraphs])
 
-Business Plan submitted by {first_name} {last_name} ({email}):
-
-{text}
-"""
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=1500
+def analyze_text(text):
+    messages = [
+        {"role": "system", "content": "You are a professional business plan evaluator. Provide a grade (A–F), a summary, and three specific improvement recommendations."},
+        {"role": "user", "content": text}
+    ]
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=messages,
+        temperature=0.4
     )
-    return response.choices[0].message["content"]
+    return response.choices[0].message.content.strip()
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
+    data = request.get_json()
+    file_url = data.get("file_url")
+    file_type = data.get("file_type", "").lower()
+
+    if not file_url or file_type not in ["pdf", "docx"]:
+        return jsonify({"error": "Missing or invalid file_url or file_type"}), 400
+
     try:
-        data = request.json
-        file_url = data.get("file_url")
-        if not file_url:
-            return jsonify({"error": "file_url is required"}), 400
+        if file_type == "pdf":
+            text = extract_text_from_pdf(file_url)
+        else:
+            text = extract_text_from_docx(file_url)
 
-        first_name = data.get("first_name", "")
-        last_name = data.get("last_name", "")
-        email = data.get("email", "")
-        coupon = data.get("coupon_code", "")
-        consent = data.get("consent", "").lower() == "true"
+        result = analyze_text(text)
 
-        if not consent:
-            return jsonify({"error": "User did not give consent"}), 403
-
-        text = extract_text_from_file(file_url)
-        analysis = generate_analysis(text, first_name, last_name, email)
-
-        return jsonify({"analysis": analysis})
+        return jsonify({
+            "status": "success",
+            "grade_result": result
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/", methods=["GET"])
+def home():
+    return "Business Plan Grader API is live", 200
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(debug=False, host="0.0.0.0", port=5000)
