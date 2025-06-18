@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import openai
 import os
 import tempfile
+import requests
 from docx import Document
 import fitz  # PyMuPDF
 
@@ -9,65 +10,65 @@ app = Flask(__name__)
 openai.api_key = os.environ.get('OPENAI_API_KEY')
 
 
-def extract_text(file_path, file_type):
-    if file_type == 'application/pdf':
+def extract_text(file_path, content_type):
+    if content_type == 'application/pdf' or file_path.lower().endswith('.pdf'):
         with fitz.open(file_path) as doc:
             return "\n".join(page.get_text() for page in doc)
-    elif file_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+    elif content_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or file_path.lower().endswith('.docx'):
         doc = Document(file_path)
         return "\n".join([para.text for para in doc.paragraphs])
     return ""
 
 
-@app.route('/analyze', methods=['GET', 'HEAD', 'POST'])
+@app.route('/analyze', methods=['POST'])
 def analyze():
-    if request.method in ['GET', 'HEAD']:
-        # Allow Forminator's webhook test to succeed
-        return '', 200
-
     try:
-        print("🔥 Incoming POST to /analyze")
-        print("Form keys:", list(request.form.keys()))
-        print("File keys:", list(request.files.keys()))
+        print("🔥 Incoming JSON POST to /analyze")
+        data = request.get_json(force=True)
 
-        # Match Forminator field slugs
-        first_name = request.form.get('text-2', '')
-        last_name = request.form.get('text-3', '')
-        email = request.form.get('email-1', 'N/A')
-        coupon_code = request.form.get('text-1', '')
-        consent = request.form.get('consent-1', 'off')
-        uploaded_file = request.files.get('upload-1')
+        first_name = data.get('first_name', '')
+        last_name = data.get('last_name', '')
+        email = data.get('email', 'N/A')
+        coupon_code = data.get('coupon_code', '')
+        consent = data.get('consent', 'off')
+        file_url = data.get('file_url', '')
 
         full_name = f"{first_name} {last_name}".strip()
+        print(f"✅ Parsed: {full_name}, email: {email}, consent: {consent}, file_url: {file_url}")
 
-        print(f"✅ Parsed: {full_name}, email: {email}, consent: {consent}, coupon: {coupon_code}")
-
-        if consent != 'on':
+        # Accept multiple truthy values for consent
+        if str(consent).lower() not in ['on', 'yes', 'true', '1']:
             return jsonify({"error": "Consent not given"}), 400
 
-        if not uploaded_file:
-            return jsonify({"error": "No file uploaded"}), 400
+        if not file_url:
+            return jsonify({"error": "No file URL provided"}), 400
 
-        # Save uploaded file and extract text
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            uploaded_file.save(tmp.name)
-            file_text = extract_text(tmp.name, uploaded_file.content_type)
+        # Download the file from the URL Zapier provided
+        response = requests.get(file_url)
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to download file"}), 400
+
+        content_type = response.headers.get('Content-Type', '')
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp:
+            tmp.write(response.content)
+            tmp.flush()
+            file_text = extract_text(tmp.name, content_type)
 
         if not file_text.strip():
-            return jsonify({"error": "File content could not be extracted"}), 400
+            return jsonify({"error": "Unable to extract text from uploaded file"}), 400
 
-        # AI prompt for business plan grading
+        # Prepare prompt for GPT
         prompt = f"""
         Please review this business plan and provide:
         1. A letter grade (A, B, C, D, F) for lender-readiness.
-        2. Identify any missing or underdeveloped sections important for SBA or commercial funding.
-        3. Provide 3–5 professional-level suggestions to improve the plan’s clarity, credibility, or effectiveness.
+        2. Identify any missing or underdeveloped sections important for SBA or commercial funding (e.g., DSCR, CapEx, repayment, competitive positioning).
+        3. Offer 3–5 professional-level improvement suggestions to strengthen clarity, credibility, or completeness.
 
         Business plan text:
         {file_text[:15000]}
         """
 
-        response = openai.ChatCompletion.create(
+        chat_response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are an expert business plan reviewer."},
@@ -75,14 +76,17 @@ def analyze():
             ]
         )
 
-        result = response['choices'][0]['message']['content']
+        result = chat_response['choices'][0]['message']['content']
 
-        print(f"\n=== Business Plan Review for {full_name} ({email}) ===")
-        print(f"Coupon Code: {coupon_code}")
-        print(result)
-        print("\n===========================\n")
+        print(f"\n=== AI Review for {full_name} ({email}) ===\n{result}\n")
 
-        return jsonify({"message": "Analysis complete", "summary": result})
+        return jsonify({
+            "message": "Analysis complete",
+            "summary": result,
+            "name": full_name,
+            "email": email,
+            "coupon_code": coupon_code
+        })
 
     except Exception as e:
         print("❌ Exception:", str(e))
