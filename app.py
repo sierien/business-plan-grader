@@ -25,27 +25,31 @@ def analyze():
     try:
         print("🔥 Incoming JSON POST to /analyze")
         data = request.get_json(force=True)
+        print("🔥 Incoming JSON:", data)
 
-        first_name = data.get('first_name', '')
-        last_name = data.get('last_name', '')
-        email = data.get('email', 'N/A')
+        first_name = data.get('first_name', '').strip()
+        last_name = data.get('last_name', '').strip()
+        email = data.get('email', '').strip()
         coupon_code = data.get('coupon_code', '')
         consent = data.get('consent', 'off')
         file_url = data.get('file_url', '')
 
         full_name = f"{first_name} {last_name}".strip()
-        print(f"✅ Parsed: {full_name}, email: {email}, consent: {consent}, file_url: {file_url}")
+        print(f"✅ Parsed: {full_name}, email: {email}, file_url: {file_url}")
 
-        # Accept multiple truthy values for consent
         if str(consent).lower() not in ['on', 'yes', 'true', '1']:
+            print("❌ Consent not given")
             return jsonify({"error": "Consent not given"}), 400
 
-        if not file_url:
-            return jsonify({"error": "No file URL provided"}), 400
+        if not file_url or not file_url.startswith("http"):
+            print("❌ Invalid or missing file_url")
+            return jsonify({"error": "Invalid or missing file_url"}), 400
 
-        # Download the file from the URL Zapier provided
-        response = requests.get(file_url)
-        if response.status_code != 200:
+        try:
+            response = requests.get(file_url)
+            response.raise_for_status()
+        except Exception as e:
+            print("❌ File download failed:", str(e))
             return jsonify({"error": "Failed to download file"}), 400
 
         content_type = response.headers.get('Content-Type', '')
@@ -55,9 +59,9 @@ def analyze():
             file_text = extract_text(tmp.name, content_type)
 
         if not file_text.strip():
+            print("❌ No extractable text in uploaded file")
             return jsonify({"error": "Unable to extract text from uploaded file"}), 400
 
-        # Prepare prompt for GPT
         prompt = f"""
         Please review this business plan and provide:
         1. A letter grade (A, B, C, D, F) for lender-readiness.
@@ -77,8 +81,7 @@ def analyze():
         )
 
         result = chat_response['choices'][0]['message']['content']
-
-        print(f"\n=== AI Review for {full_name} ({email}) ===\n{result}\n")
+        print(f"🎯 AI Review Complete for {full_name}")
 
         return jsonify({
             "message": "Analysis complete",
@@ -89,7 +92,7 @@ def analyze():
         })
 
     except Exception as e:
-        print("❌ Exception:", str(e))
+        print("❌ Unexpected server error:", str(e))
         return jsonify({"error": str(e)}), 500
 
 
