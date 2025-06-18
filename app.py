@@ -13,34 +13,49 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def extract_text_from_pdf(url):
     response = requests.get(url)
+    if response.status_code != 200:
+        raise ValueError(f"Failed to download file: status {response.status_code}")
+
+    if os.path.exists("temp.pdf"):
+        os.remove("temp.pdf")
+
     with open("temp.pdf", "wb") as f:
         f.write(response.content)
-    doc = fitz.open("temp.pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
+
+    try:
+        doc = fitz.open("temp.pdf")
+        text = ""
+        for page in doc:
+            text += page.get_text()
+        doc.close()
+        return text
+    except Exception as e:
+        raise RuntimeError(f"Could not open or read PDF: {e}")
 
 def extract_text_from_docx(url):
     response = requests.get(url)
+    if response.status_code != 200:
+        raise ValueError(f"Failed to download file: status {response.status_code}")
+
+    if os.path.exists("temp.docx"):
+        os.remove("temp.docx")
+
     with open("temp.docx", "wb") as f:
         f.write(response.content)
-    doc = Document("temp.docx")
-    return "\n".join([para.text for para in doc.paragraphs])
+
+    try:
+        doc = Document("temp.docx")
+        return "\n".join([para.text for para in doc.paragraphs])
+    except Exception as e:
+        raise RuntimeError(f"Could not open or read DOCX: {e}")
 
 def analyze_text(text):
     messages = [
-        {
-            "role": "system",
-            "content": "You are a professional business plan evaluator. Provide a grade (A–F), a summary, and three specific improvement recommendations."
-        },
-        {
-            "role": "user",
-            "content": text
-        }
+        {"role": "system", "content": "You are a professional business plan evaluator. Provide a grade (A–F), a summary, and three specific improvement recommendations."},
+        {"role": "user", "content": text}
     ]
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-3.5-turbo",  # Token-safe model
         messages=messages,
         temperature=0.4
     )
