@@ -1,80 +1,85 @@
-from flask import Flask, request, jsonify
-import requests
 import os
+import tempfile
+import requests
+from flask import Flask, request, jsonify
+from openai import OpenAI
 import fitz  # PyMuPDF
-import openai
+from docx import Document
 
 app = Flask(__name__)
 
-# Set your OpenAI API key (make sure it's defined in the Render dashboard)
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Instantiate the OpenAI client
+client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
-@app.route('/')
-def index():
-    return 'Business Plan Grader is running.'
+def extract_text_from_pdf(file_path):
+    doc = fitz.open(file_path)
+    text = ''
+    for page in doc:
+        text += page.get_text()
+    doc.close()
+    return text
 
-@app.route('/analyze', methods=['POST'])
-def analyze_plan():
+def extract_text_from_docx(file_path):
+    doc = Document(file_path)
+    return "\n".join([para.text for para in doc.paragraphs])
+
+def analyze_content(text, first_name, last_name, email):
+    prompt = f"""
+You are a business plan analyst. A user named {first_name} {last_name} ({email}) has submitted this content for review. Please analyze the following business plan and provide professional feedback on structure, clarity, and financial readiness.
+
+Business Plan Content:
+{text}
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    return response.choices[0].message.content
+
+@app.route("/analyze", methods=["POST"])
+def analyze():
     try:
         data = request.get_json()
 
-        first_name = data.get("first_name", "N/A")
-        last_name = data.get("last_name", "N/A")
-        email = data.get("email", "N/A")
-        coupon_code = data.get("coupon_code", "")
-        consent = data.get("consent", "").lower() in ["true", "yes", "on"]
         file_url = data.get("file_url")
+        file_type = data.get("file_type", "").lower()
+        first_name = data.get("first_name", "")
+        last_name = data.get("last_name", "")
+        email = data.get("email", "")
 
-        if not consent:
-            return jsonify({"error": "Consent not given"}), 400
+        if not file_url or file_type not in ["pdf", "docx"]:
+            return jsonify({"error": "Missing or invalid file_url or file_type"}), 400
 
-        if not file_url:
-            return jsonify({"error": "Missing file URL"}), 400
+        # Download the file
+        response = requests.get(file_url)
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to download file"}), 400
 
-        # Try downloading the file
-        try:
-            response = requests.get(file_url, timeout=10)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            return jsonify({"error": f"Failed to download file: {e}"}), 400
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp_file:
+            tmp_file.write(response.content)
+            tmp_path = tmp_file.name
 
-        # Save the file temporarily
-        file_path = "/tmp/temp_file.pdf"
-        with open(file_path, "wb") as f:
-            f.write(response.content)
+        if file_type == "pdf":
+            text = extract_text_from_pdf(tmp_path)
+        elif file_type == "docx":
+            text = extract_text_from_docx(tmp_path)
+        else:
+            return jsonify({"error": "Unsupported file type"}), 400
 
-        # Extract text from PDF using PyMuPDF
-        try:
-            doc = fitz.open(file_path)
-            text = ""
-            for page in doc:
-                text += page.get_text()
-            doc.close()
-        except Exception as e:
-            return jsonify({"error": f"Failed to read PDF: {e}"}), 500
+        if not text.strip():
+            return jsonify({"error": "The document appears to be empty"}), 400
 
-        # Call OpenAI to analyze the text
-        try:
-            completion = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "You are a business plan evaluator."},
-                    {"role": "user", "content": f"Please evaluate the following business plan:\n\n{text[:10000]}"}
-                ]
-            )
-            result = completion['choices'][0]['message']['content']
-        except Exception as e:
-            return jsonify({"error": f"OpenAI API error: {e}"}), 500
-
-        return jsonify({
-            "first_name": first_name,
-            "last_name": last_name,
-            "email": email,
-            "evaluation": result
-        })
+        analysis = analyze_content(text, first_name, last_name, email)
+        return jsonify({"analysis": analysis})
 
     except Exception as e:
-        return jsonify({"error": f"Unexpected server error: {e}"}), 500
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+@app.route("/", methods=["GET"])
+def health_check():
+    return "Business Plan Grader is running!", 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
