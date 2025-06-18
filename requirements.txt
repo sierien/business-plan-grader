@@ -1,5 +1,5 @@
-flask==3.1.1
 openai>=1.0.0
-python-docx==1.2.0
-PyMuPDF==1.26.1
-requests==2.32.4
+flask
+requests
+python-docx
+PyMuPDF
