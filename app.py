@@ -30,11 +30,17 @@ def extract_text_from_docx(url):
 
 def analyze_text(text):
     messages = [
-        {"role": "system", "content": "You are a professional business plan evaluator. Provide a grade (A–F), a summary, and three specific improvement recommendations."},
-        {"role": "user", "content": text}
+        {
+            "role": "system",
+            "content": "You are a professional business plan evaluator. Provide a grade (A–F), a summary, and three specific improvement recommendations."
+        },
+        {
+            "role": "user",
+            "content": text
+        }
     ]
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="gpt-3.5-turbo",
         messages=messages,
         temperature=0.4
     )
