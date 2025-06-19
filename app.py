@@ -17,6 +17,7 @@ BROWSER_HEADERS = {
     "Accept": "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document;q=0.9,*/*;q=0.8",
 }
 
+# Extract text from PDF
 def extract_text_from_pdf(url):
     response = requests.get(url, headers=BROWSER_HEADERS)
     if response.status_code != 200:
@@ -29,6 +30,7 @@ def extract_text_from_pdf(url):
         text += page.get_text()
     return text
 
+# Extract text from DOCX
 def extract_text_from_docx(url):
     response = requests.get(url, headers=BROWSER_HEADERS)
     if response.status_code != 200:
@@ -38,18 +40,52 @@ def extract_text_from_docx(url):
     doc = Document("temp.docx")
     return "\n".join([para.text for para in doc.paragraphs])
 
+# Analyze text using OpenAI and return Zapier-friendly output
 def analyze_text(text):
     messages = [
-        {"role": "system", "content": "You are a professional business plan evaluator. Provide a grade (A–F), a summary, and three specific improvement recommendations."},
+        {
+            "role": "system",
+            "content": (
+                "You are a professional business plan evaluator. "
+                "Respond in this exact format:\n\n"
+                "Grade: [letter]\n\n"
+                "Summary: [1 short paragraph]\n\n"
+                "Improvement Recommendations:\n"
+                "1. [rec one]\n"
+                "2. [rec two]\n"
+                "3. [rec three]"
+            )
+        },
         {"role": "user", "content": text}
     ]
+
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,
         temperature=0.4
     )
-    return response.choices[0].message.content.strip()
 
+    raw = response.choices[0].message.content.strip()
+
+    # Format with ||| for Zapier splitting
+    try:
+        parts = raw.split("Improvement Recommendations:")
+        header = parts[0].strip()
+        recs = parts[1].strip().split("\n")[:3]
+
+        grade_line = header.split("\n\n")[0].replace("Grade:", "").strip()
+        summary_line = header.split("\n\n")[1].replace("Summary:", "").strip()
+
+        rec1 = recs[0].lstrip("1. ").strip()
+        rec2 = recs[1].lstrip("2. ").strip()
+        rec3 = recs[2].lstrip("3. ").strip()
+
+        return f"{grade_line}|||{summary_line}|||{rec1}|||{rec2}|||{rec3}"
+
+    except Exception:
+        return raw  # Fallback if formatting fails
+
+# Analyze endpoint
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.get_json()
@@ -75,9 +111,11 @@ def analyze():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Health check route
 @app.route("/", methods=["GET"])
 def home():
     return "Business Plan Grader API is live", 200
 
+# Run the app
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)
