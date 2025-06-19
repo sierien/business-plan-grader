@@ -8,17 +8,11 @@ import fitz  # PyMuPDF
 # Initialize Flask app
 app = Flask(__name__)
 
-# Initialize OpenAI client using new v1+ SDK
+# Initialize OpenAI client (v1+ SDK)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Common headers to mimic a browser
-BROWSER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept": "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document;q=0.9,*/*;q=0.8",
-}
-
 def extract_text_from_pdf(url):
-    response = requests.get(url, headers=BROWSER_HEADERS)
+    response = requests.get(url)
     if response.status_code != 200:
         raise Exception(f"Failed to download file: status {response.status_code}")
     with open("temp.pdf", "wb") as f:
@@ -30,7 +24,7 @@ def extract_text_from_pdf(url):
     return text
 
 def extract_text_from_docx(url):
-    response = requests.get(url, headers=BROWSER_HEADERS)
+    response = requests.get(url)
     if response.status_code != 200:
         raise Exception(f"Failed to download file: status {response.status_code}")
     with open("temp.docx", "wb") as f:
@@ -40,15 +34,19 @@ def extract_text_from_docx(url):
 
 def analyze_text(text):
     messages = [
-        {"role": "system", "content": "You are a professional business plan evaluator. Provide a grade (A–F), a summary, and three specific improvement recommendations."},
+        {"role": "system", "content": "You are a professional business plan evaluator. Provide the following as plain text:\n1. Grade (A–F)\n2. Summary paragraph\n3. Three numbered improvement recommendations. Use double newlines to separate each section."},
         {"role": "user", "content": text}
     ]
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-3.5-turbo",  # use 3.5 for token efficiency
         messages=messages,
         temperature=0.4
     )
-    return response.choices[0].message.content.strip()
+
+    result = response.choices[0].message.content.strip()
+
+    # Use ||| as a separator for Zapier-friendly formatting
+    return result.replace("\n\n", "|||")
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
