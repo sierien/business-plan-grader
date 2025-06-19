@@ -8,9 +8,10 @@ import fitz  # PyMuPDF
 # Initialize Flask app
 app = Flask(__name__)
 
-# Initialize OpenAI client (v1+ SDK)
+# Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Function to extract text from PDF
 def extract_text_from_pdf(url):
     response = requests.get(url)
     if response.status_code != 200:
@@ -23,6 +24,7 @@ def extract_text_from_pdf(url):
         text += page.get_text()
     return text
 
+# Function to extract text from DOCX
 def extract_text_from_docx(url):
     response = requests.get(url)
     if response.status_code != 200:
@@ -32,22 +34,34 @@ def extract_text_from_docx(url):
     doc = Document("temp.docx")
     return "\n".join([para.text for para in doc.paragraphs])
 
+# Function to analyze text with OpenAI
 def analyze_text(text):
     messages = [
-        {"role": "system", "content": "You are a professional business plan evaluator. Provide the following as plain text:\n1. Grade (A–F)\n2. Summary paragraph\n3. Three numbered improvement recommendations. Use double newlines to separate each section."},
+        {
+            "role": "system",
+            "content": (
+                "You are a professional business plan evaluator. "
+                "Provide the following as plain text:\n"
+                "1. Grade (A–F)\n"
+                "2. Summary paragraph\n"
+                "3. Three numbered improvement recommendations.\n\n"
+                "Use double newlines to separate each section."
+            )
+        },
         {"role": "user", "content": text}
     ]
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",  # use 3.5 for token efficiency
+        model="gpt-3.5-turbo",
         messages=messages,
         temperature=0.4
     )
 
     result = response.choices[0].message.content.strip()
 
-    # Use ||| as a separator for Zapier-friendly formatting
+    # Add separators for Zapier
     return result.replace("\n\n", "|||")
 
+# Main endpoint for analysis
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.get_json()
@@ -73,9 +87,11 @@ def analyze():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Health check
 @app.route("/", methods=["GET"])
 def home():
     return "Business Plan Grader API is live", 200
 
+# Run app
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)
